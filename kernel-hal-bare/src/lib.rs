@@ -16,11 +16,13 @@
 #![no_std]
 #![feature(asm)]
 #![feature(linkage)]
+#![feature(naked_functions)]
 #![deny(warnings)]
 
 #[macro_use]
 extern crate log;
 
+#[macro_use]
 extern crate alloc;
 
 #[macro_use]
@@ -34,12 +36,14 @@ use core::{
     task::{Context, Poll},
 };
 use kernel_hal::defs::*;
-use kernel_hal::vdso::*;
+// use kernel_hal::vdso::*;
 use kernel_hal::UserContext;
 use naive_timer::Timer;
 use spin::Mutex;
 
 pub mod arch;
+pub mod drivers;
+pub mod util;
 
 pub use self::arch::*;
 
@@ -133,8 +137,20 @@ impl Frame {
     }
 }
 
-fn phys_to_virt(paddr: PhysAddr) -> VirtAddr {
+#[cfg(not(target_arch = "mips"))]
+pub fn phys_to_virt(paddr: PhysAddr) -> VirtAddr {
     unsafe { PMEM_BASE + paddr }
+}
+
+/// MIPS is special
+#[cfg(target_arch = "mips")]
+pub fn phys_to_virt(paddr: usize) -> usize {
+    const PHYSICAL_MEMORY_OFFSET: usize = 0x8000_0000;
+    if paddr <= PHYSICAL_MEMORY_OFFSET {
+        PHYSICAL_MEMORY_OFFSET + paddr
+    } else {
+        paddr
+    }
 }
 
 /// Read physical memory from `paddr` to `buf`.
@@ -189,6 +205,11 @@ pub fn timer_set(deadline: Duration, callback: Box<dyn FnOnce(Duration) + Send +
 pub fn timer_tick() {
     let now = arch::timer_now();
     NAIVE_TIMER.lock().expire(now);
+}
+
+#[naked]
+pub unsafe extern "C" fn read_user_fixup() -> usize {
+    return 1;
 }
 
 /// Initialize the HAL.

@@ -7,10 +7,15 @@ use {
     core::cell::{Ref, RefCell, RefMut},
     core::ops::Range,
     core::sync::atomic::*,
-    hashbrown::HashMap,
     kernel_hal::{frame_flush, PhysFrame, PAGE_SIZE},
     spin::{Mutex, MutexGuard},
 };
+
+#[cfg(target_arch = "mips")]
+use alloc::collections::BTreeMap as HashMap;
+
+#[cfg(not(target_arch = "mips"))]
+use hashbrown::HashMap;
 
 enum VMOType {
     /// The original node.
@@ -1042,8 +1047,11 @@ impl Drop for VMObjectPaged {
 #[allow(dead_code)]
 /// Generate a owner ID.
 fn new_owner_id() -> u64 {
+    #[cfg(target_arch = "x86_64")]
     static OWNER_ID: AtomicU64 = AtomicU64::new(1);
-    OWNER_ID.fetch_add(1, Ordering::SeqCst)
+    #[cfg(target_arch = "mips")]
+    static OWNER_ID: AtomicU32 = AtomicU32::new(1);
+    OWNER_ID.fetch_add(1, Ordering::SeqCst) as u64
 }
 
 const VM_PAGE_OBJECT_MAX_PIN_COUNT: u8 = 31;

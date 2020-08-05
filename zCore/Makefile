@@ -9,16 +9,41 @@ hypervisor ?=
 smp ?= 1
 test_filter ?= *.*
 
+FEATURES += board_$(BOARD)
+
+
+
 build_args := -Z build-std=core,alloc --target $(arch).json
+ifeq ($(arch), mipsel)
+build_args += --features board_malta
+build_args += --features link_user
+endif
+
 build_path := target/$(arch)/$(mode)
 kernel := $(build_path)/zcore
 kernel_img := $(build_path)/zcore.img
 ESP := $(build_path)/esp
 OVMF := ../rboot/OVMF.fd
-qemu := qemu-system-x86_64
+qemu := qemu-system-$(arch)
 OBJDUMP := rust-objdump -print-imm-hex -x86-asm-syntax=intel
 VMDISK := $(build_path)/boot.vdi
 QEMU_DISK := $(build_path)/disk.qcow2
+sysroot := $(shell rustc --print sysroot)
+strip := $(shell find $(sysroot) -name llvm-strip)
+hostcc := gcc
+dtc := dtc
+ifeq ($(arch), mipsel)
+BOARD ?= malta
+else
+BOARD ?= qemu
+endif
+
+# currently only mipsel architecture need DTB linked to the kernel
+ifeq ($(arch), mipsel)
+DTB := src/arch/$(arch)/board/$(BOARD)/device.dtb
+endif
+
+export USER_IMG = $(arch).img
 
 ifeq ($(mode), release)
 	build_args += --release
@@ -31,7 +56,7 @@ else
 endif
 
 qemu_opts := \
-	-smp $(smp)
+	-smp cores=$(smp)
 
 ifeq ($(arch), x86_64)
 qemu_opts += \
@@ -46,6 +71,15 @@ qemu_opts += \
 	-m 4G \
 	-nic none \
 	-device isa-debug-exit,iobase=0xf4,iosize=0x04
+else ifeq ($(arch), mipsel)
+ifeq ($(BOARD), malta)
+qemu_opts += \
+	-machine $(BOARD) -device VGA \
+	-hda mipsel.qcow2 \
+	-serial null -serial null -serial mon:stdio \
+	-kernel $(kernel_img)
+	
+endif
 endif
 
 ifeq ($(hypervisor), 1)
@@ -92,6 +126,7 @@ build-parallel-test: build $(QEMU_DISK)
 	echo 'cmdline=LOG=warn:userboot=test/core-standalone-test:userboot.shutdown:core-tests=$(test_filter)' >> $(ESP)/EFI/Boot/rboot.conf
 
 $(kernel_img): kernel bootloader
+ifeq ($(arch), x86_64)
 	mkdir -p $(ESP)/EFI/zCore $(ESP)/EFI/Boot
 	cp ../rboot/target/x86_64-unknown-uefi/release/rboot.efi $(ESP)/EFI/Boot/BootX64.efi
 	cp rboot.conf $(ESP)/EFI/Boot/rboot.conf
@@ -104,13 +139,32 @@ else
 	cp ../prebuilt/zircon/x64/$(zbi_file).zbi $(ESP)/EFI/zCore/fuchsia.zbi
 endif
 	cp $(kernel) $(ESP)/EFI/zCore/zcore.elf
+else ifeq ($(arch), mipsel)
+# qemu-system-mipsel accepts ELF file only, so objcopy is not needed
+	@$(strip) $(kernel) -o $@
+endif
 
-kernel:
+%.dtb: %.dts
+ifeq ($(arch), mipsel)
+	@echo Generating device tree file $@
+	@$(dtc) -I dts -O dtb -o $@ $<
+	# @rm -rf src/arch/${arch}/boot/dtb.gen.s
+endif
+
+kernel: $(DTB)
+ifeq ($(arch), mipsel)
+	@for file in entry ; do \
+	    $(hostcc) -Dboard_$(BOARD) -E src/arch/$(arch)/boot/$${file}.S -o src/arch/$(arch)/boot/$${file}.gen.s ; \
+	done
+	$(hostcc) -Dboard_$(BOARD) -E src/arch/$(arch)/boot/linker.ld.S -o src/arch/$(arch)/boot/linker.ld
+endif
 	echo Building zCore kenel
 	cargo build $(build_args)
 
-bootloader:
-	cd ../rboot && make build
+bootloader: $(kernel)
+ifeq ($(arch), x86_64)
+	@cd ../rboot && make build
+endif
 
 clean:
 	cargo clean

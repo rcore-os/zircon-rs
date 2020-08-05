@@ -12,7 +12,7 @@ impl Syscall<'_> {
         info!("fork:");
         let new_proc = Process::fork_from(self.zircon_process(), false)?;
         let new_thread = Thread::create_linux(&new_proc)?;
-        new_thread.start_with_regs(GeneralRegs::new_fork(self.regs), self.spawn_fn)?;
+        new_thread.start_with_context(UserContext::new_fork(self.context), self.spawn_fn)?;
 
         info!("fork: {} -> {}", self.zircon_process().id(), new_proc.id());
         Ok(new_proc.id() as usize)
@@ -22,7 +22,7 @@ impl Syscall<'_> {
         info!("vfork:");
         let new_proc = Process::fork_from(self.zircon_process(), true)?;
         let new_thread = Thread::create_linux(&new_proc)?;
-        new_thread.start_with_regs(GeneralRegs::new_fork(self.regs), self.spawn_fn)?;
+        new_thread.start_with_context(UserContext::new_fork(self.context), self.spawn_fn)?;
 
         let new_proc: Arc<dyn KernelObject> = new_proc;
         info!("vfork: {} -> {}", self.zircon_process().id(), new_proc.id());
@@ -60,8 +60,8 @@ impl Syscall<'_> {
             panic!("unsupported sys_clone flags: {:#x}", flags);
         }
         let new_thread = Thread::create_linux(self.zircon_process())?;
-        let regs = GeneralRegs::new_clone(self.regs, newsp, newtls);
-        new_thread.start_with_regs(regs, self.spawn_fn)?;
+        let context = UserContext::new_clone(self.context, newsp, newtls);
+        new_thread.start_with_context(context, self.spawn_fn)?;
 
         let tid = new_thread.id();
         info!("clone: {} -> {}", self.thread.id(), tid);
@@ -169,7 +169,7 @@ impl Syscall<'_> {
         // TODO: use right signal
         self.zircon_process().signal_set(Signal::SIGNALED);
 
-        *self.regs = GeneralRegs::new_fn(entry, sp, 0, 0);
+        *self.context = UserContext::new_fn(entry, sp, 0, 0);
         Ok(0)
     }
     //
@@ -292,34 +292,34 @@ bitflags! {
     }
 }
 
-trait RegExt {
+trait CtxExt {
     fn new_fn(entry: usize, sp: usize, arg1: usize, arg2: usize) -> Self;
     fn new_clone(regs: &Self, newsp: usize, newtls: usize) -> Self;
     fn new_fork(regs: &Self) -> Self;
 }
 
-#[cfg(target_arch = "x86_64")]
-impl RegExt for GeneralRegs {
+impl CtxExt for UserContext {
     fn new_fn(entry: usize, sp: usize, arg1: usize, arg2: usize) -> Self {
-        GeneralRegs {
-            rip: entry,
-            rsp: sp,
-            rdi: arg1,
-            rsi: arg2,
-            ..Default::default()
-        }
+        let mut ctx = UserContext::default();
+        ctx.set_ip(entry);
+        ctx.set_sp(sp);
+        ctx.set_syscall_args([arg1, arg2, 0, 0, 0, 0]);
+        ctx
     }
 
-    fn new_clone(regs: &Self, newsp: usize, newtls: usize) -> Self {
-        GeneralRegs {
-            rax: 0,
-            rsp: newsp,
-            fsbase: newtls,
-            ..*regs
-        }
+    fn new_clone(origin_ctx: &Self, newsp: usize, newtls: usize) -> Self {
+        let mut ctx = UserContext::default();
+        ctx.general = origin_ctx.general;
+        ctx.set_syscall_ret(0);
+        ctx.set_sp(newsp);
+        ctx.set_tls(newtls);
+        ctx
     }
 
-    fn new_fork(regs: &Self) -> Self {
-        GeneralRegs { rax: 0, ..*regs }
+    fn new_fork(origin_ctx: &Self) -> Self {
+        let mut ctx = UserContext::default();
+        ctx.general = origin_ctx.general;
+        ctx.set_syscall_ret(0);
+        ctx
     }
 }
