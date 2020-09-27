@@ -7,6 +7,7 @@ members = [
     "linux-syscall",
     "linux-loader",
     "kernel-hal-unix",
+    "kernel-hal-sel4",
     "kernel-hal",
 ]
 
@@ -14,4 +15,5 @@ exclude = [
     "zircon-user",
 	"zCore",
 	"rboot",
+    "zcboot-sel4",
 ]

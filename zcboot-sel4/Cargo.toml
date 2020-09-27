@@ -1,0 +1,16 @@
+[package]
+name = "zcboot-sel4"
+version = "0.1.0"
+authors = ["losfair <zhy20000919@hotmail.com>"]
+edition = "2018"
+
+[profile.release]
+lto = true
+panic = "abort"
+
+[dependencies]
+kernel-hal-sel4 = { path = "../kernel-hal-sel4" }
+
+zircon-object = { path = "../zircon-object" }
+zircon-loader = { path = "../zircon-loader", default-features = false }
+zircon-syscall = { path = "../zircon-syscall" }
